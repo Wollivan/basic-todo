@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Glassmorphism To-Do App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background: radial-gradient(circle at top left, #3b82f6, transparent), radial-gradient(circle at bottom right, #ef4444, transparent), linear-gradient(135deg, #1f2937, #4b5563);
+            background-size: 400% 400%;
+            animation: gradient-animation 15s ease infinite;
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+        }
+
+        @keyframes gradient-animation {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        .glass {
+            background: rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: all 0.2s ease-in-out;
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: all 0.2s ease-in-out;
+        }
+        
+        .drag-over {
+            transform: scale(1.03);
+            border-color: #3b82f6;
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
+        }
+
+        .urgent-card {
+            border: 2px solid #ef4444;
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+            background: rgba(255, 245, 245, 0.2);
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-8 text-gray-800">
+
+    <div id="loading-spinner" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-white"></div>
+    </div>
+
+    <main class="max-w-7xl mx-auto py-8">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl sm:text-5xl font-extrabold text-white mb-2 tracking-wide">
+                My Planner
+            </h1>
+            <p class="text-white/80 text-lg">Organize your tasks like a document.</p>
+        </header>
+
+        <!-- Main container with glassmorphism effect -->
+        <div class="glass p-6 sm:p-8 rounded-2xl">
+            <div id="auth-status" class="text-center text-white/80 text-sm mb-4">
+                Authenticating...
+            </div>
+
+            <div class="flex flex-col md:flex-row gap-6 mb-8">
+                <input id="task-input" type="text" placeholder="Add a new task..." class="flex-grow glass-card px-4 py-3 rounded-lg text-white placeholder-white/70 focus:outline-none focus:ring-2 focus:ring-white/50">
+                <button id="add-task-btn" class="glass-card px-6 py-3 rounded-lg text-white font-semibold hover:bg-white/30 active:scale-95 transition-transform">
+                    Add Task
+                </button>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-6">
+                <!-- Today Section -->
+                <div id="today-container" data-category="today" class="glass-card p-4 rounded-xl flex-1 min-h-[300px] overflow-hidden">
+                    <h2 class="text-xl font-bold text-white mb-4">Today</h2>
+                    <div id="today-list" class="space-y-4">
+                        <!-- To-do items will be rendered here -->
+                    </div>
+                </div>
+
+                <!-- Tomorrow Section -->
+                <div id="tomorrow-container" data-category="tomorrow" class="glass-card p-4 rounded-xl flex-1 min-h-[300px] overflow-hidden">
+                    <h2 class="text-xl font-bold text-white mb-4">Tomorrow</h2>
+                    <div id="tomorrow-list" class="space-y-4">
+                        <!-- To-do items will be rendered here -->
+                    </div>
+                </div>
+
+                <!-- Future Section -->
+                <div id="future-container" data-category="future" class="glass-card p-4 rounded-xl flex-1 min-h-[300px] overflow-hidden">
+                    <h2 class="text-xl font-bold text-white mb-4">Future</h2>
+                    <div id="future-list" class="space-y-4">
+                        <!-- To-do items will be rendered here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+    
+    <!-- Modal for confirm/alert messages -->
+    <div id="modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 hidden items-center justify-center z-50 transition-opacity duration-300">
+        <div class="glass p-8 rounded-xl max-w-sm w-full mx-4 text-center">
+            <p id="modal-text" class="text-white text-lg mb-4"></p>
+            <button id="modal-ok-btn" class="glass-card px-6 py-2 rounded-lg text-white font-semibold hover:bg-white/30 active:scale-95 transition-transform">OK</button>
+        </div>
+    </div>
+    
+    <script type="module">
+        import { initializeApp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase global variables are provided by the environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db;
+        let auth;
+        let userId;
+
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const authStatus = document.getElementById('auth-status');
+        const taskInput = document.getElementById('task-input');
+        const addTaskBtn = document.getElementById('add-task-btn');
+        const todayList = document.getElementById('today-list');
+        const tomorrowList = document.getElementById('tomorrow-list');
+        const futureList = document.getElementById('future-list');
+        const todayContainer = document.getElementById('today-container');
+        const tomorrowContainer = document.getElementById('tomorrow-container');
+        const futureContainer = document.getElementById('future-container');
+        const modal = document.getElementById('modal');
+        const modalText = document.getElementById('modal-text');
+        const modalOkBtn = document.getElementById('modal-ok-btn');
+
+        let draggedItem = null;
+
+        // Custom modal function to replace alert()
+        function showModal(message) {
+            modalText.textContent = message;
+            modal.style.display = 'flex';
+        }
+
+        modalOkBtn.addEventListener('click', () => {
+            modal.style.display = 'none';
+        });
+
+        async function initializeFirebase() {
+            try {
+                // Set debug level for more verbose logging in the console.
+                setLogLevel('debug');
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                // Sign in with custom token if available, otherwise sign in anonymously
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        authStatus.textContent = `User ID: ${userId}`;
+                        setupFirestoreListener();
+                    } else {
+                        // Handle user logged out state if necessary
+                        console.error("No user is signed in.");
+                        showModal("Authentication failed. Please refresh the page.");
+                    }
+                    loadingSpinner.style.display = 'none';
+                });
+
+            } catch (e) {
+                console.error("Error initializing Firebase:", e);
+                showModal("Failed to initialize the app. Check the console for details.");
+                loadingSpinner.style.display = 'none';
+            }
+        }
+
+        function setupFirestoreListener() {
+            if (!userId) {
+                console.error("User ID is not set. Cannot set up Firestore listener.");
+                return;
+            }
+
+            const tasksCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/tasks`);
+            onSnapshot(tasksCollectionRef, (querySnapshot) => {
+                const tasks = [];
+                querySnapshot.forEach((doc) => {
+                    tasks.push({ id: doc.id, ...doc.data() });
+                });
+                renderTasks(tasks);
+            }, (error) => {
+                console.error("Error listening to Firestore changes:", error);
+                showModal("An error occurred while fetching your data. Please try again.");
+            });
+        }
+        
+        function renderTasks(tasks) {
+            todayList.innerHTML = '';
+            tomorrowList.innerHTML = '';
+            futureList.innerHTML = '';
+
+            tasks.forEach(task => {
+                const item = document.createElement('div');
+                item.className = `glass-card p-4 rounded-xl cursor-grab flex items-center justify-between ${task.isUrgent ? 'urgent-card' : ''}`;
+                item.setAttribute('draggable', true);
+                item.dataset.id = task.id;
+                
+                const taskText = document.createElement('div');
+                taskText.className = "flex-grow text-white break-words";
+                taskText.textContent = task.text;
+
+                const controls = document.createElement('div');
+                controls.className = "flex items-center space-x-2 ml-4";
+
+                const urgentBtn = document.createElement('button');
+                urgentBtn.className = `p-1 rounded-full hover:bg-white/30 transition-colors ${task.isUrgent ? 'text-red-400' : 'text-white/60'}`;
+                urgentBtn.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5">
+                        <path fill-rule="evenodd" d="M9.401 3.003c1.155-2.091 4.037-2.091 5.192 0L19.342 12c1.155 2.091-.403 4.711-2.792 4.711H7.451c-2.389 0-3.947-2.62-2.792-4.711L9.4 3.003zM12 8.75a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9.5a.75.75 0 01.75-.75zM12 15.5a.75.75 0 100 1.5.75.75 0 000-1.5z" clip-rule="evenodd" />
+                    </svg>
+                `;
+                urgentBtn.addEventListener('click', () => toggleUrgent(task.id, task.isUrgent));
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = "text-white/60 hover:text-red-400 transition-colors p-1 rounded-full hover:bg-white/30";
+                deleteBtn.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                `;
+                deleteBtn.addEventListener('click', () => deleteTask(task.id));
+
+                controls.appendChild(urgentBtn);
+                controls.appendChild(deleteBtn);
+                item.appendChild(taskText);
+                item.appendChild(controls);
+
+                if (task.category === 'today') {
+                    todayList.appendChild(item);
+                } else if (task.category === 'tomorrow') {
+                    tomorrowList.appendChild(item);
+                } else {
+                    futureList.appendChild(item);
+                }
+            });
+        }
+
+        async function addTask() {
+            const text = taskInput.value.trim();
+            if (text === '') {
+                showModal("Task text cannot be empty.");
+                return;
+            }
+            if (!userId) {
+                showModal("Authentication is not ready. Please wait.");
+                return;
+            }
+
+            try {
+                const tasksCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/tasks`);
+                await addDoc(tasksCollectionRef, {
+                    text: text,
+                    category: 'today',
+                    isUrgent: false,
+                    createdAt: new Date()
+                });
+                taskInput.value = '';
+            } catch (e) {
+                console.error("Error adding document: ", e);
+                showModal("Error adding task. Please try again.");
+            }
+        }
+
+        async function deleteTask(id) {
+            if (!userId) {
+                showModal("Authentication is not ready. Please wait.");
+                return;
+            }
+            try {
+                const docRef = doc(db, `artifacts/${appId}/users/${userId}/tasks`, id);
+                await deleteDoc(docRef);
+            } catch (e) {
+                console.error("Error deleting document: ", e);
+                showModal("Error deleting task. Please try again.");
+            }
+        }
+
+        async function toggleUrgent(id, isUrgent) {
+            if (!userId) {
+                showModal("Authentication is not ready. Please wait.");
+                return;
+            }
+            try {
+                const docRef = doc(db, `artifacts/${appId}/users/${userId}/tasks`, id);
+                await updateDoc(docRef, { isUrgent: !isUrgent });
+            } catch (e) {
+                console.error("Error updating document: ", e);
+                showModal("Error updating task. Please try again.");
+            }
+        }
+
+        async function updateCategory(id, newCategory) {
+            if (!userId) {
+                showModal("Authentication is not ready. Please wait.");
+                return;
+            }
+            try {
+                const docRef = doc(db, `artifacts/${appId}/users/${userId}/tasks`, id);
+                await updateDoc(docRef, { category: newCategory });
+            } catch (e) {
+                console.error("Error updating document category: ", e);
+                showModal("Error moving task. Please try again.");
+            }
+        }
+
+        // Drag and Drop Logic
+        todayContainer.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            todayContainer.classList.add('drag-over');
+        });
+        todayContainer.addEventListener('dragleave', () => todayContainer.classList.remove('drag-over'));
+        todayContainer.addEventListener('drop', (e) => {
+            e.preventDefault();
+            todayContainer.classList.remove('drag-over');
+            if (draggedItem) {
+                updateCategory(draggedItem.dataset.id, 'today');
+                draggedItem = null;
+            }
+        });
+
+        tomorrowContainer.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            tomorrowContainer.classList.add('drag-over');
+        });
+        tomorrowContainer.addEventListener('dragleave', () => tomorrowContainer.classList.remove('drag-over'));
+        tomorrowContainer.addEventListener('drop', (e) => {
+            e.preventDefault();
+            tomorrowContainer.classList.remove('drag-over');
+            if (draggedItem) {
+                updateCategory(draggedItem.dataset.id, 'tomorrow');
+                draggedItem = null;
+            }
+        });
+
+        futureContainer.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            futureContainer.classList.add('drag-over');
+        });
+        futureContainer.addEventListener('dragleave', () => futureContainer.classList.remove('drag-over'));
+        futureContainer.addEventListener('drop', (e) => {
+            e.preventDefault();
+            futureContainer.classList.remove('drag-over');
+            if (draggedItem) {
+                updateCategory(draggedItem.dataset.id, 'future');
+                draggedItem = null;
+            }
+        });
+
+        document.addEventListener('dragstart', (e) => {
+            if (e.target.classList.contains('glass-card')) {
+                draggedItem = e.target;
+                e.dataTransfer.effectAllowed = 'move';
+            }
+        });
+
+        document.addEventListener('dragend', () => {
+            draggedItem = null;
+            // Clean up drag-over classes
+            todayContainer.classList.remove('drag-over');
+            tomorrowContainer.classList.remove('drag-over');
+            futureContainer.classList.remove('drag-over');
+        });
+
+        // Event listeners
+        addTaskBtn.addEventListener('click', addTask);
+        taskInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                addTask();
+            }
+        });
+
+        window.onload = function() {
+            initializeFirebase();
+        }
+    </script>
+</body>
+</html>
